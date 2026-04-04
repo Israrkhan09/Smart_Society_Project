@@ -4,11 +4,13 @@ import React, { useState, useEffect, useRef } from "react";
 import {
   ShoppingBag, Search, Plus, Tag, Clock, MessageCircle, Info,
   Heart, X, ChevronRight, Filter, BookOpen, Phone, Star,
-  CheckCircle2, AlertTriangle, Send, Package, Home, Wrench, Zap, Car
+  CheckCircle2, AlertTriangle, Send, Package, Home, Wrench, Zap, Car,
+  Upload, ImagePlus
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import { useScrollLock } from "@/hooks/useScrollLock";
+import { supabase } from "@/lib/supabase";
 
 const CATEGORIES = [
   { label: "All", icon: ShoppingBag },
@@ -17,51 +19,7 @@ const CATEGORIES = [
   { label: "Vehicles", icon: Car },
   { label: "Services", icon: Wrench },
   { label: "Others", icon: Package },
-];
-
-const INITIAL_ITEMS = [
-  {
-    id: 1, title: "Sony PlayStation 5", price: "₨ 145,000", category: "Electronics",
-    seller: "Zain K.", sellerContact: "0300-1234567", date: "1d ago",
-    image: "https://images.unsplash.com/photo-1606144042614-b2417e99c4e3?auto=format&fit=crop&q=80&w=600",
-    condition: "Brand New", description: "Sealed box PS5 with two controllers. Never opened. Bought as a gift but already have one.",
-    rating: 4.8, reviews: 12
-  },
-  {
-    id: 2, title: "Ergonomic Office Chair", price: "₨ 12,000", category: "Furniture",
-    seller: "Sarah M.", sellerContact: "0311-9876543", date: "5h ago",
-    image: "https://images.unsplash.com/photo-1505797149-43b007664a3e?auto=format&fit=crop&q=80&w=600",
-    condition: "Used - Good", description: "High-quality ergonomic chair, used for 6 months. Lumbar support intact. No scratches.",
-    rating: 4.5, reviews: 7
-  },
-  {
-    id: 3, title: "Eco-Friendly Electric Scooter", price: "₨ 85,000", category: "Vehicles",
-    seller: "Ahmed R.", sellerContact: "0321-5556677", date: "2h ago",
-    image: "https://images.unsplash.com/photo-1593106410288-caf65eca7c9d?auto=format&fit=crop&q=80&w=600",
-    condition: "Like New", description: "Top-brand electric scooter with 40km range per charge. Only 200km done. Full kit included.",
-    rating: 5.0, reviews: 3
-  },
-  {
-    id: 4, title: "Maths Home Tuition", price: "₨ 5,000/mo", category: "Services",
-    seller: "Prof. Usman", sellerContact: "0333-7778899", date: "3d ago",
-    image: "https://images.unsplash.com/photo-1434030216411-0b793f4b4173?auto=format&fit=crop&q=80&w=600",
-    condition: "Verified Service", description: "O and A-Level maths tuition. 10 years experience. Available Mon-Sat. Morning/evening slots.",
-    rating: 4.9, reviews: 28
-  },
-  {
-    id: 5, title: "Apple MacBook Air M2", price: "₨ 295,000", category: "Electronics",
-    seller: "Hina B.", sellerContact: "0345-4443322", date: "12h ago",
-    image: "https://images.unsplash.com/photo-1611186871348-b1ce696e52c9?auto=format&fit=crop&q=80&w=600",
-    condition: "Like New", description: "M2 Macbook Air 8GB/256GB in Midnight color. Bought 3 months ago, barely used. Comes with box and charger.",
-    rating: 4.7, reviews: 9
-  },
-  {
-    id: 6, title: "Solid Wood Dining Table", price: "₨ 35,000", category: "Furniture",
-    seller: "Omar F.", sellerContact: "0312-2223344", date: "2d ago",
-    image: "https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&q=80&w=600",
-    condition: "Used - Fair", description: "6-seater sheesham wood dining table. Some minor surface marks but very sturdy. Pickup only.",
-    rating: 4.2, reviews: 5
-  },
+  { label: "Wishlist", icon: Heart },
 ];
 
 const GUIDELINES = [
@@ -76,7 +34,8 @@ export default function MarketplacePage() {
   const { user, userData } = useAuth();
   const displayName = user?.displayName || userData?.name || "Resident";
 
-  const [items, setItems] = useState<any[]>(INITIAL_ITEMS);
+  const [items, setItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [wishlist, setWishlist] = useState<number[]>([]);
@@ -85,18 +44,168 @@ export default function MarketplacePage() {
   const [showContactModal, setShowContactModal] = useState<any>(null);
   const [showDetailModal, setShowDetailModal] = useState<any>(null);
   const [contactMsg, setContactMsg] = useState("");
+  const [contactPhone, setContactPhone] = useState("");
   const [contactSent, setContactSent] = useState(false);
   const [listForm, setListForm] = useState({ title: "", price: "", category: "Electronics", condition: "Used - Good", description: "" });
+  const [listImage, setListImage] = useState<string | null>(null);
+  const [successToast, setSuccessToast] = useState(false);
+  const [errorToast, setErrorToast] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Lock body scroll when any modal is open
-  useScrollLock(!!(showGuidelines || showListModal || showContactModal || showDetailModal));
+  const fetchListings = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('listings')
+        .select(`
+          *,
+          listing_images (url)
+        `)
+        .order('created_at', { ascending: false });
 
-  // Load wishlist per user
+      if (error) throw error;
+      
+      const formatted = data.map(item => ({
+        ...item,
+        price: `₨ ${item.price.toLocaleString()}`,
+        image: item.listing_images?.[0]?.url || "https://images.unsplash.com/photo-1586023492125-27b2c045efd7?auto=format&fit=crop&q=80&w=600",
+        seller: item.seller_name || "Resident Owner",
+        seller_rating: 4.8,
+        seller_status: Math.random() > 0.3 ? "Online Now" : "Active 5m ago",
+        date: new Date(item.created_at).toLocaleDateString(),
+        rating: 4.5,
+        reviews: 12
+      }));
+
+      setItems(formatted);
+    } catch (err: any) {
+      console.error("Error fetching listings:", err);
+      setErrorToast("Failed to load listings. Please check connection.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    if (!user) return;
-    const saved = localStorage.getItem(`marketplace-wishlist-${user.uid}`);
-    if (saved) setWishlist(JSON.parse(saved));
-  }, [user]);
+    fetchListings();
+  }, []);
+
+  const handleListItem = async () => {
+    if (!listForm.title || !listForm.price || !user) {
+      setErrorToast("Please fill all required fields.");
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      setErrorToast(null);
+      let publicUrl = "";
+
+      if (listImage) {
+        const fileExt = "jpg";
+        const fileName = `${user.uid}-${Date.now()}.${fileExt}`;
+        const filePath = `listings/${fileName}`;
+
+        const base64Data = listImage.split(',')[1];
+        const byteCharacters = atob(base64Data);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'image/jpeg' });
+
+        const { error: uploadError } = await supabase.storage
+          .from('listings')
+          .upload(filePath, blob);
+
+        if (uploadError) throw new Error(`Upload Failed: ${uploadError.message}`);
+
+        const { data: { publicUrl: url } } = supabase.storage
+          .from('listings')
+          .getPublicUrl(filePath);
+        
+        publicUrl = url;
+      }
+
+      const { data: listing, error: lError } = await supabase
+        .from('listings')
+        .insert([{
+          title: listForm.title,
+          description: listForm.description,
+          price: parseFloat(listForm.price.toString().replace(/,/g, '')),
+          category: listForm.category,
+          status: 'active',
+          user_id: user.uid,
+          seller_name: user.displayName || userData?.name || "Resident",
+          ...(userData?.societyId && userData.societyId.length > 30 ? { society_id: userData.societyId } : {})
+        }])
+        .select()
+        .single();
+
+      if (lError) throw lError;
+
+      if (publicUrl) {
+        await supabase
+          .from('listing_images')
+          .insert([{ listing_id: listing.id, url: publicUrl }]);
+      }
+
+      setShowListModal(false);
+      setListForm({ title: "", price: "", category: "Electronics", condition: "Used - Good", description: "" });
+      setListImage(null);
+      setSuccessToast(true);
+      setTimeout(() => setSuccessToast(false), 4000);
+      fetchListings(); 
+    } catch (err: any) {
+      console.error("Publish Error:", err);
+      setErrorToast(err.message || "Failed to publish listing.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!contactMsg.trim() || !showContactModal || !user) return;
+    
+    try {
+      setIsSubmitting(true);
+      const { error } = await supabase
+        .from('marketplace_messages')
+        .insert([{
+          listing_id: showContactModal.id,
+          sender_id: user.uid,
+          sender_name: user.displayName || userData?.name || "Resident",
+          sender_phone: contactPhone,
+          receiver_id: showContactModal.user_id,
+          message: contactMsg
+        }]);
+
+      if (error) {
+        alert("DB Error: " + error.message);
+        throw error;
+      }
+
+      setContactSent(true);
+      setTimeout(() => { 
+        setContactSent(false); 
+        setContactMsg(""); 
+        setShowContactModal(null); 
+      }, 2500);
+    } catch (err: any) {
+      console.error("Messaging Error:", err);
+      setErrorToast("Failed to send invitation. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleImagePick = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => setListImage(e.target?.result as string);
+    reader.readAsDataURL(file);
+  };
 
   const toggleWishlist = (id: number) => {
     setWishlist(prev => {
@@ -106,41 +215,29 @@ export default function MarketplacePage() {
     });
   };
 
-  const handleListItem = () => {
-    if (!listForm.title || !listForm.price) return;
-    const newItem = {
-      id: Date.now(),
-      ...listForm,
-      price: listForm.price.startsWith("₨") ? listForm.price : `₨ ${listForm.price}`,
-      seller: displayName.split(" ")[0] + " (You)",
-      sellerContact: "Your contact",
-      date: "Just now",
-      image: "https://images.unsplash.com/photo-1586023492125-27b2c045efd7?auto=format&fit=crop&q=80&w=600",
-      rating: 0, reviews: 0
-    };
-    setItems(prev => [newItem, ...prev]);
-    setListForm({ title: "", price: "", category: "Electronics", condition: "Used - Good", description: "" });
-    setShowListModal(false);
-  };
+  useScrollLock(!!(showGuidelines || showListModal || showContactModal || showDetailModal));
 
-  const handleSendMessage = () => {
-    if (!contactMsg.trim()) return;
-    setContactSent(true);
-    setTimeout(() => { setContactSent(false); setContactMsg(""); setShowContactModal(null); }, 2500);
-  };
+  useEffect(() => {
+    if (!user) return;
+    const saved = localStorage.getItem(`marketplace-wishlist-${user.uid}`);
+    if (saved) setWishlist(JSON.parse(saved));
+  }, [user]);
 
   const filtered = items.filter(item => {
+    if (selectedCategory === "Wishlist") {
+      return wishlist.includes(item.id);
+    }
     const matchCat = selectedCategory === "All" || item.category === selectedCategory;
     const q = searchQuery.toLowerCase();
-    const matchSearch = !q || item.title.toLowerCase().includes(q) || item.category.toLowerCase().includes(q) || item.seller.toLowerCase().includes(q) || item.condition.toLowerCase().includes(q);
+    const matchSearch = !q || item.title.toLowerCase().includes(q) || item.category.toLowerCase().includes(q);
     return matchCat && matchSearch;
   });
 
   return (
-    <div className="flex flex-col gap-8" style={{ fontFamily: "'Inter', sans-serif" }}>
-
+    <div className="flex flex-col gap-8 pb-20" style={{ fontFamily: "'Inter', sans-serif" }}>
+      
       {/* Header Banner */}
-      <div className="relative rounded-[3rem] overflow-hidden bg-emerald-950 p-10 lg:p-14 text-white shadow-2xl shadow-emerald-950/20">
+      <div className="relative rounded-[3rem] overflow-hidden bg-emerald-950 p-10 lg:p-14 text-white shadow-2xl">
         <div className="absolute top-0 right-0 w-96 h-96 bg-amber-500/10 blur-[100px] -mr-20 -mt-20" />
         <div className="relative z-10 max-w-2xl">
           <div className="flex items-center gap-3 mb-6">
@@ -154,353 +251,322 @@ export default function MarketplacePage() {
             Buy, sell, or trade within your community. Verified residents only. Safe, secure, local.
           </p>
           <div className="flex flex-wrap gap-4">
-            <button
-              onClick={() => setShowListModal(true)}
-              className="bg-amber-500 hover:bg-amber-400 text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-xl shadow-amber-500/30 flex items-center gap-3"
-            >
+            <button onClick={() => setShowListModal(true)} className="bg-amber-500 hover:bg-amber-400 text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-xl shadow-amber-500/30 flex items-center gap-3">
               <Plus size={18} /> List an Item
             </button>
-            <button
-              onClick={() => setShowGuidelines(true)}
-              className="bg-white/10 hover:bg-white/20 border border-white/10 text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs transition-all flex items-center gap-3"
-            >
+            <button onClick={() => setShowGuidelines(true)} className="bg-white/10 hover:bg-white/20 border border-white/10 text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-xs transition-all flex items-center gap-3">
               <Info size={18} /> Market Guidelines
             </button>
           </div>
         </div>
       </div>
 
-      {/* Search Bar */}
-      <div className="relative group">
-        <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-amber-500 transition-colors" size={20} />
-        <input
-          type="text"
-          placeholder="Search items, categories, sellers..."
-          value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)}
-          className="w-full bg-white border border-gray-100 rounded-[1.5rem] py-5 pl-16 pr-8 text-sm font-semibold outline-none focus:ring-4 focus:ring-amber-500/10 focus:border-amber-400 transition-all shadow-sm"
-        />
-        {searchQuery && (
-          <button onClick={() => setSearchQuery("")} className="absolute right-6 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700">
-            <X size={18} />
-          </button>
-        )}
-      </div>
+      {/* Search & Categories */}
+      <div className="flex flex-col gap-6">
+        <div className="relative group">
+          <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-amber-500 transition-colors" size={20} />
+          <input
+            type="text"
+            placeholder="Search items, categories..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="w-full bg-white border border-gray-100 rounded-[1.5rem] py-5 pl-16 pr-8 text-sm font-semibold outline-none focus:ring-4 focus:ring-amber-500/10 focus:border-amber-400 transition-all shadow-sm"
+          />
+        </div>
 
-      {/* Category Tabs */}
-      <div className="flex gap-3 flex-wrap">
-        {CATEGORIES.map(({ label, icon: Icon }) => (
-          <button
-            key={label}
-            onClick={() => setSelectedCategory(label)}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all border ${
-              selectedCategory === label
-                ? "bg-amber-500 text-white border-amber-500 shadow-lg shadow-amber-500/20"
-                : "bg-white text-gray-400 border-gray-100 hover:border-amber-200 hover:text-amber-500"
-            }`}
-          >
-            <Icon size={14} /> {label}
-          </button>
-        ))}
-        {wishlist.length > 0 && (
-          <button
-            onClick={() => setSelectedCategory("__WISHLIST__")}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all border ${
-              selectedCategory === "__WISHLIST__"
-                ? "bg-rose-500 text-white border-rose-500 shadow-lg shadow-rose-500/20"
-                : "bg-white text-rose-400 border-rose-100 hover:text-rose-500"
-            }`}
-          >
-            <Heart size={14} /> Wishlist ({wishlist.length})
-          </button>
-        )}
-      </div>
-
-      {/* Results count */}
-      <div className="flex justify-between items-center -mt-3">
-        <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest">
-          {selectedCategory === "__WISHLIST__"
-            ? `${wishlist.length} Saved Items`
-            : `${filtered.length} Listing${filtered.length !== 1 ? "s" : ""} Found`}
-        </p>
+        <div className="flex gap-3 flex-wrap">
+          {CATEGORIES.map(({ label, icon: Icon }) => (
+            <button
+              key={label}
+              onClick={() => setSelectedCategory(label)}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-2xl text-[11px] font-black uppercase tracking-widest transition-all border ${
+                selectedCategory === label
+                  ? "bg-amber-500 text-white border-amber-500 shadow-lg"
+                  : "bg-white text-gray-400 border-gray-100 hover:border-amber-200"
+              }`}
+            >
+              <Icon size={14} /> {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Listings Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-        <AnimatePresence mode="popLayout">
-          {(selectedCategory === "__WISHLIST__" ? items.filter(i => wishlist.includes(i.id)) : filtered).map(item => (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-8 px-2">
+        {loading ? (
+          [...Array(6)].map((_, i) => (
+            <div key={i} className="bg-white rounded-[3.5rem] p-6 border border-gray-100 animate-pulse">
+              <div className="aspect-[16/10] bg-gray-50 rounded-[2.5rem] mb-6" />
+              <div className="px-4 pb-4 space-y-3">
+                <div className="h-4 bg-gray-50 rounded-full w-3/4" />
+                <div className="h-3 bg-gray-50 rounded-full w-1/2" />
+              </div>
+            </div>
+          ))
+        ) : filtered.length > 0 ? (
+          filtered.map(item => (
             <motion.div
               layout key={item.id}
-              initial={{ opacity: 0, scale: 0.92 }}
+              initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.92 }}
-              className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm overflow-hidden group hover:shadow-2xl hover:shadow-amber-500/10 hover:-translate-y-1 transition-all duration-300 cursor-pointer"
+              className="bg-white rounded-[3.5rem] overflow-hidden border border-gray-100 shadow-sm hover:shadow-2xl hover:shadow-emerald-950/10 transition-all group flex flex-col h-full"
               onClick={() => setShowDetailModal(item)}
             >
-              {/* Image */}
+              {/* Product Image Section - Full Cover */}
               <div className="relative aspect-[16/10] overflow-hidden">
-                <img src={item.image} alt={item.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/30 to-transparent" />
-                <div className="absolute top-4 left-4">
-                  <span className="bg-white/90 backdrop-blur-md px-3 py-1 rounded-full text-[9px] font-black uppercase text-amber-600 shadow">
-                    {item.category}
-                  </span>
-                </div>
+                <img src={item.image} alt={item.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
+                
+                {/* Wishlist Heart */}
                 <button
                   onClick={e => { e.stopPropagation(); toggleWishlist(item.id); }}
-                  className={`absolute top-4 right-4 w-9 h-9 backdrop-blur-md rounded-full flex items-center justify-center transition-all shadow-lg ${
-                    wishlist.includes(item.id) ? "bg-rose-500 text-white" : "bg-white/70 text-rose-400 hover:bg-rose-500 hover:text-white"
+                  className={`absolute top-5 right-5 w-11 h-11 backdrop-blur-xl rounded-full flex items-center justify-center transition-all shadow-lg border border-white/20 ${
+                    wishlist.includes(item.id) 
+                      ? "bg-rose-500 text-white border-rose-400" 
+                      : "bg-white/40 text-white hover:bg-rose-500 hover:text-white"
                   }`}
                 >
-                  <Heart size={15} fill={wishlist.includes(item.id) ? "currentColor" : "none"} />
+                  <Heart size={20} fill={wishlist.includes(item.id) ? "currentColor" : "none"} />
                 </button>
-                <div className="absolute bottom-4 left-4">
-                  <span className="bg-black/40 backdrop-blur-md text-white text-[9px] font-black uppercase tracking-wider px-3 py-1 rounded-full">
-                    {item.condition}
-                  </span>
-                </div>
               </div>
 
-              {/* Info */}
-              <div className="p-6">
-                <div className="flex justify-between items-start mb-2">
-                  <h3 className="text-base font-black text-gray-900 group-hover:text-amber-600 transition-colors leading-tight pr-4">{item.title}</h3>
-                  <p className="text-lg font-black text-amber-600 tracking-tight shrink-0">{item.price}</p>
-                </div>
-                <p className="text-xs text-gray-400 font-medium mb-4 line-clamp-2">{item.description}</p>
-
-                <div className="flex items-center justify-between pt-4 border-t border-gray-50">
-                  <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 bg-amber-50 rounded-lg flex items-center justify-center font-black text-[11px] text-amber-600 uppercase">
-                      {item.seller.charAt(0)}
-                    </div>
-                    <span className="text-[11px] font-black text-gray-700">{item.seller}</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Star size={11} className="text-amber-400 fill-amber-400" />
-                    <span className="text-[10px] font-black text-gray-500">{item.rating > 0 ? item.rating : "New"}</span>
+              {/* Product Info Section - Professional Black Theme */}
+              <div className="p-7 flex flex-col flex-1">
+                <div className="mb-3">
+                  <h3 className="text-xl font-black text-gray-900 line-clamp-1 mb-1 tracking-tight">
+                    {item.title}
+                  </h3>
+                  <div className="flex flex-wrap gap-2 items-center">
+                    <span className="bg-gray-50 border border-gray-100 px-3 py-1.5 rounded-xl text-[9px] font-black uppercase text-gray-400 tracking-widest leading-none">
+                      {item.category}
+                    </span>
+                    <div className="w-1.5 h-1.5 bg-gray-200 rounded-full mx-1" />
+                    <span className="text-[11px] font-black text-gray-900 truncate max-w-[120px] leading-none">
+                       {item.seller}
+                    </span>
                   </div>
                 </div>
 
-                <button
-                  onClick={e => { e.stopPropagation(); setShowContactModal(item); }}
-                  className="mt-4 w-full bg-amber-500 hover:bg-amber-400 text-white py-3 rounded-2xl font-black text-[11px] uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20"
-                >
-                  <MessageCircle size={14} /> Contact Seller
-                </button>
+                {/* Price & Action Row - Monochromatic Polish */}
+                <div className="flex justify-between items-center mt-auto gap-4 border-t border-gray-50 pt-4">
+                  <div className="flex items-baseline gap-1 shrink-0">
+                    <span className="text-[11px] font-black text-gray-900 font-sans leading-none uppercase">Rs</span>
+                    <span className="text-[28px] font-black text-gray-900 tracking-tighter font-sans leading-none">
+                      {item.price.replace(/[₨Rs ]/g, "").toLocaleString()}
+                    </span>
+                  </div>
+                  
+                  <button
+                    onClick={e => { e.stopPropagation(); setShowContactModal(item); }}
+                    className="flex-1 bg-emerald-950 hover:bg-amber-500 text-white py-5 rounded-[1.75rem] font-black uppercase tracking-[0.15em] text-[10px] flex items-center justify-center gap-3 shadow-xl transition-all active:scale-95 group/btn min-h-[56px]"
+                  >
+                    <MessageCircle size={18} /> CONTACT
+                  </button>
+                </div>
               </div>
             </motion.div>
-          ))}
-        </AnimatePresence>
+          ))
+        ) : (
+          <div className="col-span-full py-20 text-center">
+            <ShoppingBag size={48} className="mx-auto text-gray-100 mb-4" />
+            <p className="text-gray-400 font-bold uppercase tracking-widest">No listings found</p>
+          </div>
+        )}
       </div>
 
-      {(selectedCategory === "__WISHLIST__" ? items.filter(i => wishlist.includes(i.id)) : filtered).length === 0 && (
-        <div className="text-center py-20 bg-white rounded-[3rem] border border-gray-100">
-          <ShoppingBag size={40} className="text-gray-200 mx-auto mb-4" />
-          <p className="text-sm font-black text-gray-400 uppercase tracking-widest">No listings found</p>
-          <p className="text-xs text-gray-300 mt-2">Try a different category or search term</p>
-        </div>
-      )}
-
-      {/* ─── GUIDELINES MODAL ─── */}
+      {/* ─── MODALS ─── */}
       <AnimatePresence>
+        {/* Guidelines Modal */}
         {showGuidelines && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => setShowGuidelines(false)}
-          >
-            <motion.div initial={{ scale: 0.92, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92, y: 20 }}
-              className="bg-white rounded-[3rem] p-10 max-w-lg w-full shadow-2xl"
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="flex justify-between items-center mb-8">
-                <div>
-                  <h2 className="text-2xl font-black text-gray-900">Market Guidelines</h2>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Community Rules & Safety</p>
-                </div>
-                <button onClick={() => setShowGuidelines(false)} className="w-10 h-10 bg-gray-100 rounded-2xl flex items-center justify-center text-gray-500 hover:bg-rose-50 hover:text-rose-500 transition-all">
-                  <X size={18} />
-                </button>
-              </div>
-              <div className="flex flex-col gap-5">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/70 backdrop-blur-md z-[1000] flex items-center justify-center p-6" onClick={() => setShowGuidelines(false)}>
+            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }} className="bg-white rounded-[3rem] p-10 max-w-lg w-full shadow-2xl relative" onClick={e => e.stopPropagation()}>
+              <h2 className="text-3xl font-black text-gray-900 mb-8">Guidelines</h2>
+              <div className="space-y-6">
                 {GUIDELINES.map((g, i) => (
-                  <div key={i} className="flex gap-4 p-5 bg-gray-50 rounded-2xl">
-                    <g.icon size={20} className={`${g.color} shrink-0 mt-0.5`} />
+                  <div key={i} className="flex gap-4">
+                    <div className="shrink-0 w-10 h-10 bg-gray-50 rounded-xl flex items-center justify-center"><g.icon className={g.color} size={20} /></div>
                     <div>
-                      <p className="font-black text-sm text-gray-900 mb-1">{g.title}</p>
-                      <p className="text-xs text-gray-500 leading-relaxed">{g.body}</p>
+                      <p className="font-black text-gray-900">{g.title}</p>
+                      <p className="text-sm text-gray-500 leading-relaxed font-medium">{g.body}</p>
                     </div>
                   </div>
                 ))}
               </div>
-              <button onClick={() => setShowGuidelines(false)} className="mt-8 w-full bg-emerald-500 hover:bg-emerald-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-xs transition-all">
-                I Understand
-              </button>
+              <button onClick={() => setShowGuidelines(false)} className="mt-10 w-full bg-emerald-600 text-white py-5 rounded-2xl font-black uppercase tracking-widest text-xs">Got it</button>
             </motion.div>
           </motion.div>
         )}
-      </AnimatePresence>
 
-      {/* ─── LIST ITEM MODAL ─── */}
-      <AnimatePresence>
+        {/* List Item Modal */}
         {showListModal && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => setShowListModal(false)}
-          >
-            <motion.div initial={{ scale: 0.92, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92, y: 20 }}
-              className="bg-white rounded-[3rem] p-10 max-w-lg w-full shadow-2xl"
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="flex justify-between items-center mb-8">
-                <div>
-                  <h2 className="text-2xl font-black text-gray-900">List an Item</h2>
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Fill in the details below</p>
-                </div>
-                <button onClick={() => setShowListModal(false)} className="w-10 h-10 bg-gray-100 rounded-2xl flex items-center justify-center text-gray-500 hover:bg-rose-50 hover:text-rose-500 transition-all">
-                  <X size={18} />
-                </button>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/70 backdrop-blur-md z-[1000] flex items-center justify-center p-6" onClick={() => setShowListModal(false)}>
+            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }} className="bg-white rounded-[3.5rem] p-12 max-w-xl w-full shadow-2xl relative max-h-[90vh] overflow-y-auto hide-scrollbar" onClick={e => e.stopPropagation()}>
+              <div className="flex justify-between items-start mb-8">
+                <h2 className="text-3xl font-black text-gray-900 leading-tight">List an Item</h2>
+                <button onClick={() => setShowListModal(false)} className="p-2 bg-gray-50 rounded-xl hover:bg-rose-50 hover:text-rose-500 transition-all"><X size={20} /></button>
               </div>
-              <div className="flex flex-col gap-4">
-                <input value={listForm.title} onChange={e => setListForm(p => ({ ...p, title: e.target.value }))}
-                  placeholder="Item title *" className="w-full border border-gray-200 rounded-2xl px-5 py-3.5 text-sm font-semibold outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/10 transition-all" />
-                <input value={listForm.price} onChange={e => setListForm(p => ({ ...p, price: e.target.value }))}
-                  placeholder="Price (e.g. 15,000) *" className="w-full border border-gray-200 rounded-2xl px-5 py-3.5 text-sm font-semibold outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/10 transition-all" />
-                <div className="grid grid-cols-2 gap-4">
-                  <select value={listForm.category} onChange={e => setListForm(p => ({ ...p, category: e.target.value }))}
-                    className="border border-gray-200 rounded-2xl px-5 py-3.5 text-sm font-semibold outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/10 transition-all bg-white">
-                    {CATEGORIES.filter(c => c.label !== "All").map(c => <option key={c.label}>{c.label}</option>)}
-                  </select>
-                  <select value={listForm.condition} onChange={e => setListForm(p => ({ ...p, condition: e.target.value }))}
-                    className="border border-gray-200 rounded-2xl px-5 py-3.5 text-sm font-semibold outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/10 transition-all bg-white">
-                    {["Brand New", "Like New", "Used - Good", "Used - Fair", "Verified Service"].map(c => <option key={c}>{c}</option>)}
-                  </select>
+              
+              <div className="space-y-6">
+                <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handleImagePick(f); }} />
+                <div onClick={() => fileInputRef.current?.click()} className={`aspect-[16/10] rounded-[2rem] border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-all overflow-hidden ${listImage ? "border-emerald-500 bg-emerald-50" : "border-gray-200 hover:border-amber-400 hover:bg-amber-50"}`}>
+                  {listImage ? (
+                    <img src={listImage} alt="Preview" className="w-full h-full object-cover" />
+                  ) : (
+                    <>
+                      <ImagePlus size={32} className="text-gray-300 mb-2" />
+                      <span className="text-[10px] font-black uppercase text-gray-400 tracking-widest">Add Product Photo</span>
+                    </>
+                  )}
                 </div>
-                <textarea value={listForm.description} onChange={e => setListForm(p => ({ ...p, description: e.target.value }))}
-                  placeholder="Describe your item (condition, age, what's included...)"
-                  rows={4} className="w-full border border-gray-200 rounded-2xl px-5 py-3.5 text-sm font-semibold outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/10 transition-all resize-none" />
-                <button onClick={handleListItem}
-                  disabled={!listForm.title || !listForm.price}
-                  className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-white py-4 rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-lg shadow-amber-500/20">
-                  Publish Listing
+
+                <div className="space-y-4">
+                  <div className="relative">
+                    <Tag className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                    <input type="text" placeholder="Title" value={listForm.title} onChange={e => setListForm({...listForm, title: e.target.value})} className="w-full bg-gray-50 border-none rounded-2xl py-4 pl-14 pr-6 text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500" />
+                  </div>
+                  <div className="relative">
+                    <Zap className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                    <input type="text" placeholder="Price (₨)" value={listForm.price} onChange={e => setListForm({...listForm, price: e.target.value})} className="w-full bg-gray-50 border-none rounded-2xl py-4 pl-14 pr-6 text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <select value={listForm.category} onChange={e => setListForm({...listForm, category: e.target.value})} className="w-full bg-gray-50 border-none rounded-2xl py-4 px-6 text-sm font-bold outline-none ring-offset-0 focus:ring-2 focus:ring-amber-500 cursor-pointer">
+                      {CATEGORIES.filter(c => c.label !== "All").map(c => <option key={c.label} value={c.label}>{c.label}</option>)}
+                    </select>
+                    <select value={listForm.condition} onChange={e => setListForm({...listForm, condition: e.target.value})} className="w-full bg-gray-50 border-none rounded-2xl py-4 px-6 text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer">
+                      <option value="Brand New">Brand New</option>
+                      <option value="Like New">Like New</option>
+                      <option value="Used - Good">Used - Good</option>
+                    </select>
+                  </div>
+                  <textarea placeholder="Description" rows={3} value={listForm.description} onChange={e => setListForm({...listForm, description: e.target.value})} className="w-full bg-gray-50 border-none rounded-2xl p-6 text-sm font-medium outline-none focus:ring-2 focus:ring-amber-500 resize-none" />
+                </div>
+
+                <button onClick={handleListItem} disabled={isSubmitting} className="w-full bg-gradient-to-r from-amber-500 to-amber-600 text-white py-5 rounded-2xl font-black uppercase tracking-widest text-xs shadow-xl shadow-amber-500/30 active:scale-95 disabled:opacity-50">
+                  {isSubmitting ? "Publishing..." : "Publish Listing"}
                 </button>
               </div>
             </motion.div>
           </motion.div>
         )}
-      </AnimatePresence>
 
-      {/* ─── CONTACT MODAL ─── */}
-      <AnimatePresence>
+        {/* Contact Modal Upgrade */}
         {showContactModal && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => { setShowContactModal(null); setContactMsg(""); setContactSent(false); }}
-          >
-            <motion.div initial={{ scale: 0.92, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92, y: 20 }}
-              className="bg-white rounded-[3rem] p-10 max-w-md w-full shadow-2xl"
-              onClick={e => e.stopPropagation()}
-            >
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/80 backdrop-blur-xl z-[1000] flex items-center justify-center p-6" onClick={() => setShowContactModal(null)}>
+            <motion.div initial={{ scale: 0.9, y: 30 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 30 }} className="bg-white rounded-[3.5rem] p-10 max-w-md w-full shadow-[0_50px_100px_-20px_rgba(0,0,0,0.4)] relative border border-gray-100" onClick={e => e.stopPropagation()}>
               {contactSent ? (
-                <div className="text-center py-8">
-                  <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center mx-auto mb-5">
-                    <CheckCircle2 size={32} className="text-emerald-500" />
-                  </div>
-                  <h3 className="text-xl font-black text-gray-900 mb-2">Message Sent!</h3>
-                  <p className="text-sm text-gray-400">The seller has been notified. They'll respond shortly.</p>
+                <div className="text-center py-10">
+                  <div className="w-20 h-20 bg-emerald-50 rounded-[2rem] flex items-center justify-center mx-auto mb-6 shadow-inner"><CheckCircle2 className="text-emerald-500" size={40} /></div>
+                  <h3 className="text-2xl font-black text-gray-900 mb-2">Invitation Sent!</h3>
+                  <p className="text-gray-400 font-medium text-sm">Owner will respond shortly.</p>
                 </div>
               ) : (
                 <>
-                  <div className="flex justify-between items-start mb-7">
+                  <div className="flex justify-between items-start mb-8">
                     <div>
-                      <h2 className="text-xl font-black text-gray-900">Contact Seller</h2>
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">{showContactModal.title}</p>
+                      <h2 className="text-2xl font-black text-gray-900 leading-none">Contact</h2>
+                      <p className="text-[10px] font-black text-amber-500 uppercase tracking-[0.3em] mt-3 bg-amber-50 px-3 py-1 rounded-full inline-block">Direct Seller Invitation</p>
                     </div>
-                    <button onClick={() => setShowContactModal(null)} className="w-10 h-10 bg-gray-100 rounded-2xl flex items-center justify-center text-gray-500 hover:bg-rose-50 hover:text-rose-500 transition-all">
-                      <X size={18} />
+                    <button onClick={() => setShowContactModal(null)} className="w-12 h-12 bg-gray-50 rounded-[1rem] flex items-center justify-center text-gray-400 hover:bg-rose-500 hover:text-white transition-all shadow-sm">
+                      <X size={20} />
                     </button>
                   </div>
-                  <div className="bg-amber-50 border border-amber-100 rounded-2xl p-5 mb-6 flex items-center gap-4">
-                    <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center font-black text-amber-600 text-sm">
-                      {showContactModal.seller.charAt(0)}
+
+                  <div className="bg-gray-50/50 rounded-[2rem] p-5 mb-6 border border-gray-100/50 shadow-inner">
+                    <div className="flex items-center gap-4 mb-6">
+                        <div className="w-14 h-14 bg-white rounded-[1.25rem] flex items-center justify-center font-black text-amber-600 text-xl shadow-xl border border-gray-100">
+                          {showContactModal.seller.charAt(0)}
+                        </div>
+                       <div>
+                         <div className="flex items-center gap-2 mb-1">
+                            <span className="font-black text-lg text-gray-900 leading-none">{showContactModal.seller}</span>
+                         </div>
+                         <div className="flex items-center gap-1.5">
+                            <Star size={12} className="text-amber-400 fill-amber-400" />
+                            <span className="text-[12px] font-black text-gray-600">{showContactModal.seller_rating || "4.8"}</span>
+                            <span className="text-gray-300 mx-1">|</span>
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Verified Resident</span>
+                         </div>
+                       </div>
                     </div>
-                    <div>
-                      <p className="font-black text-sm text-gray-900">{showContactModal.seller}</p>
-                      <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest">{showContactModal.sellerContact}</p>
+                    <div className="bg-white border border-gray-100 rounded-[1.5rem] p-4 flex items-center gap-3">
+                      <div className="w-12 h-12 rounded-xl overflow-hidden shadow-inner shrink-0">
+                        <img src={showContactModal.image} alt="" className="w-full h-full object-cover" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-[12px] font-black text-gray-900 mb-0.5 leading-tight truncate">{showContactModal.title}</p>
+                        <p className="text-base font-black text-amber-500 tracking-tight font-sans">
+                           <span className="text-[10px] mr-0.5">Rs</span> 
+                           {showContactModal.price.replace(/[₨Rs ]/g, "")}
+                        </p>
+                      </div>
                     </div>
                   </div>
-                  <textarea
-                    value={contactMsg}
-                    onChange={e => setContactMsg(e.target.value)}
-                    placeholder={`Hi, I'm interested in your "${showContactModal.title}" listed for ${showContactModal.price}. Is it still available?`}
-                    rows={5}
-                    className="w-full border border-gray-200 rounded-2xl px-5 py-4 text-sm font-medium outline-none focus:border-amber-400 focus:ring-2 focus:ring-amber-400/10 transition-all resize-none mb-4"
-                  />
-                  <button onClick={handleSendMessage}
-                    disabled={!contactMsg.trim()}
-                    className="w-full bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2">
-                    <Send size={14} /> Send Message
+
+                  <div className="space-y-3 mb-6">
+                    <div className="relative group">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1 px-6">WhatsApp Number</label>
+                      <input 
+                        type="tel"
+                        value={contactPhone}
+                        onChange={e => setContactPhone(e.target.value)}
+                        placeholder="e.g. +92 300 1234567"
+                        className="w-full bg-gray-50/80 border-2 border-transparent focus:border-amber-500/20 focus:bg-white rounded-[1.5rem] px-6 py-3.5 text-sm font-semibold outline-none transition-all shadow-inner"
+                      />
+                    </div>
+                    
+                    <div className="relative group">
+                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-1 px-6">Message Invitation</label>
+                      <textarea 
+                        value={contactMsg} 
+                        onChange={e => setContactMsg(e.target.value)} 
+                        placeholder={`I'm interested in "${showContactModal.title}"...`} 
+                        className="w-full h-20 bg-gray-50/80 border-2 border-transparent focus:border-amber-500/20 focus:bg-white rounded-[1.5rem] px-6 py-4 text-sm font-semibold outline-none transition-all resize-none shadow-inner" 
+                      />
+                    </div>
+                  </div>
+                  
+                  <button onClick={handleSendMessage} className="w-full bg-gradient-to-br from-gray-900 to-black hover:from-amber-500 hover:to-amber-600 text-white py-5 rounded-[2rem] font-black uppercase tracking-[0.25em] text-xs flex items-center justify-center gap-3 shadow-[0_20px_40px_-5px_rgba(0,0,0,0.2)] active:scale-95 transition-all">
+                    <Send size={18} /> Send Invitation
                   </button>
                 </>
               )}
             </motion.div>
           </motion.div>
         )}
-      </AnimatePresence>
 
-      {/* ─── DETAIL MODAL ─── */}
-      <AnimatePresence>
+        {/* Detail Modal */}
         {showDetailModal && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => setShowDetailModal(null)}
-          >
-            <motion.div initial={{ scale: 0.92, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.92, y: 20 }}
-              className="bg-white rounded-[3rem] max-w-2xl w-full shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto"
-              onClick={e => e.stopPropagation()}
-            >
-              <div className="relative aspect-[16/8] overflow-hidden">
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 bg-black/80 backdrop-blur-md z-[1000] flex items-center justify-center p-6" onClick={() => setShowDetailModal(null)}>
+            <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }} className="bg-white rounded-[3.5rem] max-w-lg w-full shadow-2xl relative overflow-hidden" onClick={e => e.stopPropagation()}>
+              <div className="aspect-[16/10] bg-gray-50 relative">
                 <img src={showDetailModal.image} alt={showDetailModal.title} className="w-full h-full object-cover" />
-                <button onClick={() => setShowDetailModal(null)}
-                  className="absolute top-5 right-5 w-10 h-10 bg-white/80 backdrop-blur-sm rounded-full flex items-center justify-center text-gray-700 hover:text-rose-500 transition-all shadow">
-                  <X size={18} />
-                </button>
-                <div className="absolute bottom-5 left-5 flex gap-2">
-                  <span className="bg-white/90 backdrop-blur-md px-4 py-1.5 rounded-full text-[10px] font-black uppercase text-amber-600 shadow">{showDetailModal.category}</span>
-                  <span className="bg-black/40 backdrop-blur-md text-white px-4 py-1.5 rounded-full text-[10px] font-black uppercase">{showDetailModal.condition}</span>
-                </div>
+                <button onClick={() => setShowDetailModal(null)} className="absolute top-6 right-6 w-10 h-10 bg-white/80 backdrop-blur-md rounded-xl flex items-center justify-center hover:bg-rose-500 hover:text-white transition-all shadow-lg border border-white/20"><X size={20} /></button>
               </div>
-              <div className="p-8">
-                <div className="flex justify-between items-start mb-4">
-                  <h2 className="text-2xl font-black text-gray-900">{showDetailModal.title}</h2>
-                  <p className="text-2xl font-black text-amber-600 shrink-0">{showDetailModal.price}</p>
-                </div>
-                {showDetailModal.rating > 0 && (
-                  <div className="flex items-center gap-1 mb-4">
-                    {[...Array(5)].map((_, i) => <Star key={i} size={14} className={i < Math.round(showDetailModal.rating) ? "text-amber-400 fill-amber-400" : "text-gray-200"} />)}
-                    <span className="text-xs font-black text-gray-400 ml-2">{showDetailModal.rating} · {showDetailModal.reviews} reviews</span>
-                  </div>
-                )}
-                <p className="text-sm text-gray-600 leading-relaxed mb-6">{showDetailModal.description}</p>
-                <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-2xl mb-6">
-                  <div className="w-10 h-10 bg-amber-50 rounded-xl flex items-center justify-center font-black text-amber-600 text-sm">{showDetailModal.seller.charAt(0)}</div>
+              <div className="p-10 space-y-6">
+                <div className="flex justify-between items-start">
                   <div>
-                    <p className="font-black text-sm text-gray-900">{showDetailModal.seller}</p>
-                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Listed {showDetailModal.date}</p>
+                    <span className="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-1 block">{showDetailModal.category}</span>
+                    <h2 className="text-3xl font-black text-gray-900 tracking-tight">{showDetailModal.title}</h2>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm font-black text-amber-500 font-sans block leading-none">Rs</span>
+                    <p className="text-3xl font-black text-amber-600 tracking-tighter font-sans">{showDetailModal.price.replace(/[₨Rs ]/g, "")}</p>
                   </div>
                 </div>
-                <div className="flex gap-3">
-                  <button onClick={() => toggleWishlist(showDetailModal.id)}
-                    className={`flex-1 border py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${
-                      wishlist.includes(showDetailModal.id) ? "bg-rose-50 text-rose-500 border-rose-200" : "border-gray-200 text-gray-400 hover:border-rose-200 hover:text-rose-500"
-                    }`}>
-                    <Heart size={14} fill={wishlist.includes(showDetailModal.id) ? "currentColor" : "none"} />
-                    {wishlist.includes(showDetailModal.id) ? "Saved" : "Save"}
-                  </button>
-                  <button onClick={() => { setShowDetailModal(null); setShowContactModal(showDetailModal); }}
-                    className="flex-[2] bg-amber-500 hover:bg-amber-400 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20">
-                    <MessageCircle size={14} /> Contact Seller
-                  </button>
+
+                <div className="flex items-center gap-4 py-4 border-y border-gray-50">
+                   <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center font-black text-amber-600 border border-amber-100">{showDetailModal.seller.charAt(0)}</div>
+                   <div>
+                     <p className="font-black text-gray-900">{showDetailModal.seller}</p>
+                     <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{showDetailModal.date}</p>
+                   </div>
+                </div>
+
+                <p className="text-gray-500 font-medium leading-relaxed line-clamp-3">{showDetailModal.description || "No description provided."}</p>
+                <div className="flex gap-4 pt-4">
+                    <button onClick={() => toggleWishlist(showDetailModal.id)} className={`flex-1 py-5 rounded-2xl font-black uppercase text-xs flex items-center justify-center gap-2 border transition-all ${wishlist.includes(showDetailModal.id) ? "bg-rose-50 border-rose-100 text-rose-500" : "bg-gray-50 border-transparent text-gray-400 hover:bg-rose-50 hover:text-rose-500"}`}>
+                      <Heart size={18} fill={wishlist.includes(showDetailModal.id) ? "currentColor" : "none"} /> {wishlist.includes(showDetailModal.id) ? "Saved" : "Save"}
+                    </button>
+                    <button onClick={() => { setShowDetailModal(null); setShowContactModal(showDetailModal); }} className="flex-[2] bg-amber-500 hover:bg-amber-600 text-white py-5 rounded-2xl font-black uppercase text-xs shadow-xl shadow-amber-500/20 active:scale-95 transition-all">Contact Seller</button>
                 </div>
               </div>
             </motion.div>
@@ -508,6 +574,22 @@ export default function MarketplacePage() {
         )}
       </AnimatePresence>
 
+      {/* Toasts */}
+      <AnimatePresence>
+        {successToast && (
+          <motion.div initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 100, opacity: 0 }} className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-emerald-900 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 z-[2000] border border-emerald-800">
+            <CheckCircle2 className="text-emerald-400" size={20} />
+            <span className="font-bold text-sm tracking-wide">Listing Published Successfully!</span>
+          </motion.div>
+        )}
+        {errorToast && (
+          <motion.div initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 100, opacity: 0 }} className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-rose-900 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 z-[2000] border border-rose-800">
+            <AlertTriangle className="text-rose-400" size={20} />
+            <span className="font-bold text-sm tracking-wide">{errorToast}</span>
+            <button onClick={() => setErrorToast(null)} className="ml-2 text-white/50"><X size={14} /></button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
