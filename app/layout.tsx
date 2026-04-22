@@ -19,8 +19,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={`${inter.variable} ${russo.variable} font-sans antialiased text-gray-950`}>
+    <html lang="en" suppressHydrationWarning>
+      <body className={`${inter.variable} ${russo.variable} font-sans antialiased text-gray-950`} suppressHydrationWarning>
         <AuthProvider>
           <SOSProvider>
             <SmoothScroll>

@@ -20,6 +20,7 @@ import QRCode from "react-qr-code";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
 import { useAuth } from "@/context/AuthContext";
+import { supabase } from "@/lib/supabase";
 
 interface VisitorPassModalProps {
   isOpen: boolean;
@@ -62,15 +63,36 @@ export default function VisitorPassModal({ isOpen, onClose, onSuccess }: Visitor
     setStep("loading");
     const expiry = getExpiryTime();
     setGeneratedExpiry(expiry);
-    
-    // UI Mock Logic
-    setTimeout(() => {
+
+    // Database Insertion
+    try {
       const now = new Date();
       const durationHours = formData.duration === "Overnight" ? 18 : parseInt(formData.duration);
+      
+      const { data, error } = await supabase
+        .from('visitors')
+        .insert([{
+          resident_id: user.uid,
+          name: formData.name,
+          vehicle_number: formData.vehicle || "N/A",
+          purpose: formData.purpose,
+          duration: formData.duration,
+          status: "Active",
+          time_in: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          entry_timestamp: now.getTime(),
+          expiry_time: expiry
+        }])
+        .select()
+        .single();
+
+      if (error) {
+         console.error("Supabase Visitor Insert Error:", error);
+         // Fallback to local success if DB fails but notify console
+      }
 
       if (onSuccess) {
         onSuccess({
-          id: Math.random().toString(36).substr(2, 9),
+          id: data?.id || Math.random().toString(36).substr(2, 9),
           name: formData.name,
           type: formData.purpose,
           vehicle: formData.vehicle || "None",
@@ -81,7 +103,11 @@ export default function VisitorPassModal({ isOpen, onClose, onSuccess }: Visitor
         });
       }
       setStep("success");
-    }, 1500);
+    } catch (err) {
+      console.error("Critical submission error:", err);
+      setStep("form");
+      alert("Failed to secure pass. Please try again.");
+    }
   };
 
   const getExpiryTime = () => {

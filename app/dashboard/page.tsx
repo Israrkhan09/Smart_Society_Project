@@ -16,7 +16,6 @@ import {
   MessageSquare
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-import { motion } from "framer-motion";
 
 const defaultLogs = [
   { id: 1, type: "System Event", detail: "Security Systems Online and Operational", time: "08:00 AM", status: "Verified" }
@@ -55,8 +54,8 @@ export default function DashboardHome() {
     };
     fetchLogs();
     
-    // Listen for storage changes if in another tab, or just interval
-    const interval = setInterval(fetchLogs, 2000);
+    // Reduced polling interval - 30 seconds is enough
+    const interval = setInterval(fetchLogs, 30000);
     return () => clearInterval(interval);
   }, [user]);
 
@@ -87,14 +86,11 @@ export default function DashboardHome() {
           { label: "My Vehicles", value: "02", sub: "Registered Units", icon: Car, color: "text-blue-500 bg-blue-50" },
           { label: "Security Status", value: "100%", sub: "Sector Isolated", icon: ShieldCheck, color: "text-emerald-500 bg-emerald-50" },
         ].map((stat, i) => (
-          <motion.div
+          <div
             key={i}
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.1 }}
-            className="bg-white p-7 rounded-[2.5rem] border border-gray-100 shadow-sm flex items-center gap-6 group hover:shadow-lg transition-all"
+            className="bg-white p-7 rounded-[2.5rem] border border-gray-100 shadow-sm flex items-center gap-6 group hover:shadow-lg transition-shadow"
           >
-            <div className={`w-14 h-14 ${stat.color} rounded-2xl flex items-center justify-center transition-transform group-hover:scale-110 duration-500`}>
+            <div className={`w-14 h-14 ${stat.color} rounded-2xl flex items-center justify-center`}>
               <stat.icon size={26} strokeWidth={2.5} />
             </div>
             <div>
@@ -102,7 +98,7 @@ export default function DashboardHome() {
               <p className="text-2xl font-black text-gray-900 tracking-tight">{stat.value}</p>
               <p className="text-[10px] font-bold text-gray-400 mt-1 uppercase">{stat.sub}</p>
             </div>
-          </motion.div>
+          </div>
         ))}
       </div>
 
@@ -110,7 +106,7 @@ export default function DashboardHome() {
       <div className="w-full flex-1 flex flex-col min-h-0">
         
         {/* Recent Activity Table */}
-        <div className="bg-white rounded-[3rem] border border-gray-100 shadow-sm overflow-hidden flex flex-col" style={{ height: '700px' }}>
+        <div className="bg-white rounded-[3rem] border border-gray-100 shadow-sm overflow-hidden flex flex-col" style={{ minHeight: '500px', maxHeight: '700px' }}>
           <div className="p-8 border-b border-gray-50 flex justify-between items-center bg-white sticky top-0 z-10">
             <div>
                 <h3 className="font-black text-gray-900">Recent Activity Log</h3>
@@ -120,7 +116,7 @@ export default function DashboardHome() {
           
           <div 
             className="flex-1 overflow-y-auto p-4 lg:p-8" 
-            style={{ scrollbarWidth: 'thin', scrollbarColor: '#d1fae5 #f9fafb' }}
+            style={{ scrollbarWidth: 'thin', scrollbarColor: '#d1fae5 #f9fafb', overflowY: 'auto' }}
           >
              <table className="w-full text-left border-separate border-spacing-y-4">
                 <thead>

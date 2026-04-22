@@ -8,6 +8,7 @@ import { doc, getDoc } from "firebase/firestore";
 interface AuthContextType {
   user: User | null;
   userData: any;
+  role: 'admin' | 'resident' | 'guard' | null;
   loading: boolean;
   refreshUserData: () => Promise<void>;
 }
@@ -22,6 +23,7 @@ const AuthContext = createContext<AuthContextType>({
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [userData, setUserData] = useState<any>(null);
+  const [role, setRole] = useState<'admin' | 'resident' | 'guard' | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchUserData = async (uid: string) => {
@@ -29,7 +31,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       const docRef = doc(db, "users", uid);
       const docSnap = await getDoc(docRef);
       if (docSnap.exists()) {
-        setUserData(docSnap.data());
+        const data = docSnap.data();
+        setUserData(data);
+        setRole(data.role || 'resident'); // Default to resident if role missing
       }
     } catch (err) {
       console.error("AuthProvider: Firestore fetch error:", err);
@@ -41,39 +45,44 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   useEffect(() => {
-    console.log("AuthProvider: Initializing Auth Listener...");
-    
-    // Safety timeout: Unlock UI after 4 seconds regardless of Firebase
-    const timeoutId = setTimeout(() => {
-      setLoading(false);
-    }, 4000);
+    // 1. FAST-PATH: Try to recover session role immediately from cache
+    const cachedRole = localStorage.getItem("sessionRole") as any;
+    if (cachedRole) {
+      setRole(cachedRole);
+      // We can potentially set loading(false) here if we trust the cache
+      // but let's keep it safe and just set the role for instant sidebar rendering
+    }
 
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      console.log("AuthProvider: Auth State Changed. User:", firebaseUser ? "Yes" : "No");
-      
       setUser(firebaseUser);
       if (firebaseUser) {
-        await fetchUserData(firebaseUser.uid);
+        // We still fetch fresh data in background
+        const docRef = doc(db, "users", firebaseUser.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setUserData(data);
+          const freshRole = data.role || 'resident';
+          setRole(freshRole);
+          localStorage.setItem("sessionRole", freshRole);
+        }
       } else {
         setUserData(null);
+        setRole(null);
+        localStorage.removeItem("sessionRole");
       }
       
       setLoading(false);
-      clearTimeout(timeoutId);
     }, (error) => {
-      console.error("AuthProvider: Listener error:", error);
+      console.error("AuthProvider error:", error);
       setLoading(false);
-      clearTimeout(timeoutId);
     });
 
-    return () => {
-      unsubscribe();
-      clearTimeout(timeoutId);
-    };
+    return () => unsubscribe();
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, userData, loading, refreshUserData }}>
+    <AuthContext.Provider value={{ user, userData, role, loading, refreshUserData }}>
         {children}
     </AuthContext.Provider>
   );

@@ -54,7 +54,7 @@ export default function SignupPage() {
           if (window.location.pathname === "/signup") {
               window.location.href = "/dashboard";
           }
-      }, 1500);
+      }, 400);
     } catch (err: any) {
       console.error("SignupPage: Auth Error:", err.code || err.message);
       const msg = 

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import Sidebar from "@/components/dashboard/Sidebar";
 import DashboardHeader from "@/components/dashboard/DashboardHeader";
 import { useAuth } from "@/context/AuthContext";
@@ -8,6 +8,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { auth as firebaseAuth } from "@/lib/firebase";
 import { useSOS } from "@/context/SOSContext";
 import { ShieldAlert } from "lucide-react";
+import FloatingChatbot from "@/components/dashboard/chat/FloatingChatbot";
 
 export default function DashboardLayout({
   children,
@@ -18,6 +19,7 @@ export default function DashboardLayout({
   const router = useRouter();
   const pathname = usePathname();
   const { flow, countdown } = useSOS();
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   useEffect(() => {
     // If auth state is resolved AND there's no user in context AND no current Firebase user
@@ -28,47 +30,9 @@ export default function DashboardLayout({
     }
   }, [user, loading, router]);
 
-  // Premium loading state while checking authentication
+  // Silent load for instant feel
   if (loading && !firebaseAuth.currentUser) {
-    return (
-      <div
-        style={{
-          minHeight: "100vh",
-          backgroundColor: "#ffffff",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontFamily: "Inter, sans-serif"
-        }}
-      >
-        <div style={{ textAlign: "center" }}>
-          <div
-            style={{
-              width: "56px",
-              height: "56px",
-              border: "5px solid #d1fae5",
-              borderTopColor: "#10b981",
-              borderRadius: "50%",
-              animation: "spin 0.8s linear infinite",
-              margin: "0 auto 24px",
-            }}
-          />
-          <p
-            style={{
-              fontSize: "12px",
-              fontWeight: 900,
-              textTransform: "uppercase",
-              letterSpacing: "0.25em",
-              color: "#10b981",
-              margin: 0
-            }}
-          >
-            Securing Session...
-          </p>
-        </div>
-        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-      </div>
-    );
+    return null;
   }
 
   // If we have a user (either in context or directly in auth), show the dashboard
@@ -83,16 +47,8 @@ export default function DashboardLayout({
           fontFamily: "Inter, sans-serif"
         }}
       >
-        <Sidebar />
-        <div
-          style={{
-            flex: 1,
-            marginLeft: "288px",
-            display: "flex",
-            flexDirection: "column",
-            minHeight: "100vh",
-          }}
-        >
+        <Sidebar isSidebarOpen={isSidebarOpen} setIsSidebarOpen={setIsSidebarOpen} />
+        <div className="flex-1 flex flex-col min-h-screen transition-all duration-300" style={{ marginLeft: isSidebarOpen ? "288px" : "80px" }}>
           <DashboardHeader />
           
           {flow !== "IDLE" && pathname !== "/dashboard/sos" && (
@@ -118,23 +74,19 @@ export default function DashboardLayout({
              </div>
           )}
           
-          <main 
-            style={{ 
-              flex: 1, 
-              padding: "40px",
-              maxWidth: "1600px",
-              margin: "0 auto",
-              width: "100%",
-              boxSizing: "border-box"
-            }}
-          >
+          <main className={`w-full box-border relative flex flex-col ${pathname === '/dashboard/messages' ? 'p-0 h-[calc(100vh-73px)] overflow-hidden' : 'flex-1 px-4 py-6 md:px-10 md:py-10'}`}>
             {children}
           </main>
-          <footer style={{ padding: "40px", borderTop: "1px solid #f1f5f9", textAlign: "center" }}>
-              <p style={{ fontSize: "12px", fontWeight: 600, color: "#94a3b8", margin: 0 }}>
-                  © 2026 Smart-Society Management OS. All rights reserved.
-              </p>
-          </footer>
+          
+          {pathname !== '/dashboard/messages' && (
+            <footer style={{ padding: "40px", borderTop: "1px solid #f1f5f9", textAlign: "center" }}>
+                <p style={{ fontSize: "12px", fontWeight: 600, color: "#94a3b8", margin: 0 }}>
+                    © 2026 Smart-Society Management OS. All rights reserved.
+                </p>
+            </footer>
+          )}
+          
+          <FloatingChatbot />
         </div>
       </div>
     );

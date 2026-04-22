@@ -21,6 +21,8 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 
+import { supabase } from "@/lib/supabase";
+
 const ParkingIcon = ({ size = 24, className = "" }) => (
   <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <circle cx="12" cy="12" r="10"/>
@@ -30,10 +32,69 @@ const ParkingIcon = ({ size = 24, className = "" }) => (
 
 export default function VehiclesPage() {
   const { user } = useAuth();
-  const userName = user?.displayName || "Muhammad Kamal";
+  const userName = user?.displayName || "Resident";
   
   const [activeTab, setActiveTab] = useState("DASHBOARD");
-  
+  const [vehicles, setVehicles] = useState<any[]>([]);
+  const [bannerReqs, setBannerReqs] = useState<any[]>([]);
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  // Load from Supabase on mount
+  const fetchData = async () => {
+    if (!user) return;
+    try {
+      setLoading(true);
+      
+      // 1. Fetch Vehicles
+      const { data: vData, error: vError } = await supabase
+        .from('resident_vehicles')
+        .select('*')
+        .eq('resident_id', user.uid);
+      
+      if (!vError && vData) {
+        setVehicles(vData.map(v => ({
+          id: v.id,
+          name: v.name,
+          plate: v.plate_number,
+          slot: v.slot_number || "No Slot",
+          type: v.vehicle_type,
+          status: v.status,
+          isPrimary: v.is_primary
+        })));
+      }
+
+      // 2. Fetch Parking Requests
+      const { data: rData, error: rError } = await supabase
+        .from('parking_requests')
+        .select('*')
+        .or(`owner_id.eq.${user.uid},requester_id.eq.${user.uid}`);
+      
+      if (!rError && rData) {
+        setBannerReqs(rData.map(r => ({
+          id: r.id,
+          active: r.status === 'pending' || r.status === 'approved',
+          status: r.status,
+          timeLeft: 7200, // Fixed for now or calc from to_time
+          label: r.request_type === 'SWAP' ? 'PERMANENT SWAP' : 'TEMPORARY • 2 HOURS',
+          user: r.requester_id === user.uid ? 'YOU' : 'NEIGHBOR',
+          slot: r.slot_number,
+          loggedExpiry: false
+        })));
+      }
+
+    } catch (err) {
+      console.error("Failed to fetch vehicle data:", err);
+    } finally {
+      setLoading(false);
+      setIsLoaded(true);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, [user]);
+
   const logActivity = (type: string, detail: string, status: string) => {
     if (!user) return;
     try {
@@ -49,88 +110,6 @@ export default function VehiclesPage() {
       localStorage.setItem(key, JSON.stringify(logs));
     } catch(e) {}
   };
-
-  // Banner Request State
-  const [bannerReqs, setBannerReqs] = useState<any[]>([]);
-  const [isLoaded, setIsLoaded] = useState(false);
-
-  useEffect(() => {
-    if (!user) return;
-    const reqKey = `smart-society-vehicle-requests-${user.uid}`;
-    const syncKey = `smart-society-vehicle-sync-${user.uid}`;
-    const saved = localStorage.getItem(reqKey);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      const savedTime = localStorage.getItem(syncKey);
-      if (savedTime) {
-         const elapsed = Math.floor((Date.now() - parseInt(savedTime)) / 1000);
-         const fastForwarded = parsed.map((req: any) => {
-           if (req.status === "approved" && req.timeLeft > 0) {
-              const newTime = Math.max(0, req.timeLeft - elapsed);
-              if (newTime === 0 && !req.loggedExpiry) {
-                 logActivity("Parking Timeout", `${req.user}'s temporary parking slot ${req.slot} time has ended.`, "Completed");
-                 return { ...req, timeLeft: 0, loggedExpiry: true, label: "COMPLETED" };
-              }
-              return { ...req, timeLeft: newTime };
-           }
-           return req;
-         });
-         setBannerReqs(fastForwarded);
-      } else {
-         setBannerReqs(parsed);
-      }
-    } else {
-      setBannerReqs([
-        {
-          id: 1,
-          active: true,
-          status: "pending", 
-          timeLeft: 7200, 
-          label: "TEMPORARY • 2 HOURS",
-          user: "SARA ALI (APT 501)",
-          slot: "P-402",
-          loggedExpiry: false
-        },
-        {
-          id: 2,
-          active: true,
-          status: "pending", 
-          timeLeft: 0, 
-          label: "PERMANENT SWAP",
-          user: "OMAR FAZAL (APT 304)",
-          slot: "P-405",
-          loggedExpiry: true
-        }
-      ]);
-    }
-    setIsLoaded(true);
-  }, [user]);
-
-  useEffect(() => {
-    if (!isLoaded || !user) return;
-    localStorage.setItem(`smart-society-vehicle-requests-${user.uid}`, JSON.stringify(bannerReqs));
-    localStorage.setItem(`smart-society-vehicle-sync-${user.uid}`, Date.now().toString());
-  }, [bannerReqs, isLoaded, user]);
-
-  useEffect(() => {
-    if (!isLoaded || !user) return;
-    let timer = setInterval(() => {
-      setBannerReqs((prev) => 
-        prev.map(req => {
-          if (req.status === "approved" && req.timeLeft > 0) {
-            const nextTime = req.timeLeft - 1;
-            if (nextTime === 0 && !req.loggedExpiry) {
-               logActivity("Parking Expired", `${req.user}'s temporary slot ${req.slot} usage has formally completed.`, "Completed");
-               return { ...req, timeLeft: 0, loggedExpiry: true, label: "COMPLETED" };
-            }
-            return { ...req, timeLeft: nextTime };
-          }
-          return req;
-        })
-      );
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [isLoaded]);
 
   const formatTime = (seconds: number) => {
     const h = Math.floor(seconds / 3600);
@@ -148,37 +127,34 @@ export default function VehiclesPage() {
     { id: 5, slot: "P-505", owner: "Kamran Ali", block: "Block F", status: "idle" },
   ]);
 
-  // Active Vehicles State
-  const [vehicles, setVehicles] = useState([
-    {
-      id: 1,
-      name: "Honda Civic",
-      plate: "LEP-4029",
-      slot: "Slot P-402",
-      type: "car",
-      status: "inside",
-      isPrimary: true
-    },
-    {
-      id: 2,
-      name: "Yamaha YBR",
-      plate: "MNP-3122",
-      slot: "Slot B-21",
-      type: "bike",
-      status: "outside",
-      isPrimary: false
-    }
-  ]);
+  // Active Vehicles State (Live from Supabase)
 
-  const toggleVehicleStatus = (id: number) => {
-    setVehicles(prev => prev.map(v => {
-      if (v.id === id) {
-         const newStatus = v.status === "inside" ? "outside" : "inside";
-         logActivity("Vehicle Entry/Exit", `${v.name} (${v.plate}) was marked as ${newStatus.toUpperCase()}`, newStatus === "inside" ? "Parked" : "Active");
-         return { ...v, status: newStatus };
-      }
-      return v;
-    }));
+
+  const toggleVehicleStatus = async (id: any) => {
+    const vehicle = vehicles.find(v => v.id === id);
+    if (!vehicle) return;
+    
+    const newStatus = vehicle.status === "inside" ? "outside" : "inside";
+
+    try {
+      const { error } = await supabase
+        .from('resident_vehicles')
+        .update({ status: newStatus })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setVehicles(prev => prev.map(v => {
+        if (v.id === id) {
+           logActivity("Vehicle Entry/Exit", `${v.name} (${v.plate}) was marked as ${newStatus.toUpperCase()}`, newStatus === "inside" ? "Parked" : "Active");
+           return { ...v, status: newStatus };
+        }
+        return v;
+      }));
+    } catch (err) {
+      console.error("Status toggle error:", err);
+      alert("Failed to update status. Please try again.");
+    }
   };
 
   // Parking Slot Modal State
@@ -209,10 +185,31 @@ export default function VehiclesPage() {
     });
   };
 
-  const handleSubmitRequest = () => {
-    setSharedSlots(prev => prev.map(s => s.id === selectedSlot.id ? { ...s, status: "pending" } : s));
-    logActivity("Parking Slot Request", `Requested Parking Slot ${selectedSlot.slot} from ${selectedSlot.owner} (${modalMode})`, "Pending");
-    setIsModalOpen(false);
+  const handleSubmitRequest = async () => {
+    if (!user || !selectedSlot) return;
+    try {
+      const { error } = await supabase
+        .from('parking_requests')
+        .insert([{
+          requester_id: user.uid,
+          owner_id: selectedSlot.owner || "Neighbor", 
+          slot_number: selectedSlot.slot,
+          request_type: modalMode,
+          status: "pending",
+          from_time: formData.from ? new Date(formData.from).toISOString() : null,
+          to_time: formData.to ? new Date(formData.to).toISOString() : null,
+          phone_number: formData.phone
+        }]);
+
+      if (error) throw error;
+      
+      setSharedSlots(prev => prev.map(s => s.id === selectedSlot.id ? { ...s, status: "pending" } : s));
+      logActivity("Parking Slot Request", `Requested Parking Slot ${selectedSlot.slot} from ${selectedSlot.owner} (${modalMode})`, "Pending");
+      setIsModalOpen(false);
+    } catch (err) {
+      console.error("Request error:", err);
+      alert("Request failed. Please check connection.");
+    }
   };
 
   // Add Vehicle Modal State
@@ -223,24 +220,44 @@ export default function VehiclesPage() {
     type: "car",
   });
 
-  const handleAddVehicle = () => {
-    if (!newVehicleData.name || !newVehicleData.plate) return;
+  const handleAddVehicle = async () => {
+    if (!newVehicleData.name || !newVehicleData.plate || !user) return;
     
-    const newId = vehicles.length ? Math.max(...vehicles.map(v => v.id)) + 1 : 1;
-    const newVehicle = {
-      id: newId,
-      name: newVehicleData.name,
-      plate: newVehicleData.plate.toUpperCase(),
-      slot: newVehicleData.type === "car" ? "Slot P-402" : "Slot B-21", // default slots
-      type: newVehicleData.type,
-      status: "inside", 
-      isPrimary: vehicles.length === 0, 
-    };
-    
-    setVehicles([newVehicle, ...vehicles]);
-    logActivity("New Vehicle Added", `New ${newVehicleData.type} '${newVehicleData.name}' added to your account.`, "Verified");
-    setIsAddVehicleModalOpen(false);
-    setNewVehicleData({ name: "", plate: "", type: "car" });
+    try {
+      const { data, error } = await supabase
+        .from('resident_vehicles')
+        .insert([{
+          resident_id: user.uid,
+          name: newVehicleData.name,
+          plate_number: newVehicleData.plate.toUpperCase(),
+          vehicle_type: newVehicleData.type,
+          slot_number: newVehicleData.type === "car" ? "P-402" : "B-21",
+          status: "inside",
+          is_primary: vehicles.length === 0
+        }])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      const newVehicle = {
+        id: data.id,
+        name: data.name,
+        plate: data.plate_number,
+        slot: data.slot_number,
+        type: data.vehicle_type,
+        status: data.status,
+        isPrimary: data.is_primary
+      };
+      
+      setVehicles([newVehicle, ...vehicles]);
+      logActivity("New Vehicle Added", `New ${newVehicleData.type} '${newVehicleData.name}' added to your account.`, "Verified");
+      setIsAddVehicleModalOpen(false);
+      setNewVehicleData({ name: "", plate: "", type: "car" });
+    } catch (err) {
+       console.error("Add vehicle error:", err);
+       alert("Failed to add vehicle. Please check connection.");
+    }
   };
 
   return (
@@ -372,15 +389,9 @@ export default function VehiclesPage() {
       </div>
 
       {/* Main Content Area */}
-      <AnimatePresence mode="wait">
+      <div>
         {activeTab === "DASHBOARD" && (
-          <motion.div 
-            key="dashboard"
-            initial={{ opacity: 0, y: 10 }} 
-            animate={{ opacity: 1, y: 0 }} 
-            exit={{ opacity: 0, y: -10 }}
-            className="mt-2"
-          >
+          <div className="mt-2">
              <div className="flex items-center justify-between mb-6 px-2">
                 <h2 className="text-2xl font-black text-gray-900 tracking-tight">Active Vehicles</h2>
                 <button 
@@ -402,10 +413,10 @@ export default function VehiclesPage() {
                     {vehicles.filter(v => v.status === "inside").map(v => (
                       <motion.div 
                         layout
-                        initial={{ opacity: 0, scale: 0.9 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.9 }}
-                        transition={{ duration: 0.2 }}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.1 }}
                         key={v.id} 
                         className="bg-white rounded-[2rem] p-6 lg:p-7 border border-gray-100 shadow-sm relative flex flex-col hover:shadow-md transition-shadow"
                       >
@@ -465,10 +476,10 @@ export default function VehiclesPage() {
                     {vehicles.filter(v => v.status === "outside").map(v => (
                       <motion.div 
                         layout
-                        initial={{ opacity: 0, scale: 0.9 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.9 }}
-                        transition={{ duration: 0.2 }}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.1 }}
                         key={v.id} 
                         className="bg-white rounded-[2rem] p-6 lg:p-7 border border-gray-100 shadow-sm relative flex flex-col hover:shadow-md transition-shadow"
                       >
@@ -519,17 +530,11 @@ export default function VehiclesPage() {
              </div>
              <div className="pb-10" />
 
-          </motion.div>
+          </div>
         )}
 
         {activeTab === "SMART PARKING" && (
-          <motion.div 
-            key="smart"
-            initial={{ opacity: 0, y: 10 }} 
-            animate={{ opacity: 1, y: 0 }} 
-            exit={{ opacity: 0, y: -10 }}
-            className="bg-white rounded-[2.5rem] p-8 lg:p-10 border border-gray-100 shadow-sm mt-4"
-          >
+          <div className="bg-white rounded-[2.5rem] p-8 lg:p-10 border border-gray-100 shadow-sm mt-4">
              <div className="flex items-center gap-4 mb-8">
                 <Users className="text-blue-600" size={26} strokeWidth={2.5} />
                 <h2 className="text-2xl font-black text-gray-900 tracking-tight">Neighbors Shared Slots</h2>
@@ -578,9 +583,9 @@ export default function VehiclesPage() {
                   </div>
                 ))}
              </div>
-          </motion.div>
+          </div>
         )}
-      </AnimatePresence>
+      </div>
 
       {/* Parking Slot Request Modal */}
       <AnimatePresence>

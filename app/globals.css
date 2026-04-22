@@ -15,6 +15,42 @@ body {
   font-family: 'Inter', sans-serif !important;
 }
 
+/* ── Global Performance: Instant click feedback ── */
+button, [role="button"], [onClick], a {
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* ── Global Scrollbar Styles ── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d1fae5 #f9fafb;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: #f9fafb;
+  border-radius: 10px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #d1fae5;
+  border-radius: 10px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #6ee7b7;
+}
+
+/* ── No scrollbar utility ── */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
 @layer components {
   .glass-card {
     @apply bg-white/70 backdrop-blur-xl border border-white/20 shadow-xl;

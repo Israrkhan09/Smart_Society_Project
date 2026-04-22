@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   Plus, 
   Users, 
@@ -21,6 +21,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import VisitorPassModal from "@/components/dashboard/VisitorPassModal";
 import { useAuth } from "@/context/AuthContext";
 
+import { supabase } from "@/lib/supabase";
+
 export default function VisitorsPage() {
   const { user } = useAuth();
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -28,25 +30,49 @@ export default function VisitorsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [visitors, setVisitors] = useState<any[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  // Load from LocalStorage on mount
-  React.useEffect(() => {
+  // Load from Supabase on mount
+  const fetchVisitors = async () => {
     if (!user) return;
-    const saved = localStorage.getItem(`smart-society-visitors-${user.uid}`);
-    if (saved) {
-      try {
-        setVisitors(JSON.parse(saved));
-      } catch (e) {
-        console.error("Failed to parse visitors from local storage");
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('visitors')
+        .select('*')
+        .eq('resident_id', user.uid)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      
+      if (data) {
+        setVisitors(data.map(v => ({
+          id: v.id,
+          name: v.name,
+          type: v.purpose,
+          vehicle: v.vehicle_number,
+          timeIn: v.time_in,
+          status: v.status,
+          avatar: v.name.split(' ').map((n: string) => n[0]).join('').toUpperCase().substring(0, 2)
+        })));
       }
-    } else {
-      setVisitors([]);
+    } catch (err) {
+      console.error("Failed to fetch visitors:", err);
+      // Fallback to local storage
+      const saved = localStorage.getItem(`smart-society-visitors-${user.uid}`);
+      if (saved) setVisitors(JSON.parse(saved));
+    } finally {
+      setLoading(false);
+      setIsLoaded(true);
     }
-    setIsLoaded(true);
+  };
+
+  useEffect(() => {
+    fetchVisitors();
   }, [user]);
 
-  // Save to LocalStorage on change
-  React.useEffect(() => {
+  // Save to LocalStorage on change (Mirror)
+  useEffect(() => {
     if (isLoaded && user) {
       localStorage.setItem(`smart-society-visitors-${user.uid}`, JSON.stringify(visitors));
     }
@@ -82,12 +108,24 @@ export default function VisitorsPage() {
     logActivity("Visitor Pass", `${newVisitor.type} QR Pass issued for ${newVisitor.name}.`, "Active");
   };
 
-  const handleExitVisitor = (id: number) => {
-    const visitor = visitors.find(v => v.id === id);
-    if (visitor) {
-      logActivity("Visitor Exit", `${visitor.type} ${visitor.name} marked as safely exited.`, "Used");
+  const handleExitVisitor = async (id: any) => {
+    try {
+      const { error } = await supabase
+        .from('visitors')
+        .update({ status: 'Used' })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      const visitor = visitors.find(v => v.id === id);
+      if (visitor) {
+        logActivity("Visitor Exit", `${visitor.type} ${visitor.name} marked as safely exited.`, "Used");
+      }
+      setVisitors(prev => prev.map(v => v.id === id ? { ...v, status: "Used" } : v));
+    } catch (err) {
+      console.error("Exit error:", err);
+      alert("Failed to mark exit. Please try again.");
     }
-    setVisitors(prev => prev.map(v => v.id === id ? { ...v, status: "Used" } : v));
   };
 
   const activePasses = visitors.filter(v => v.status === "Active").length;
@@ -141,7 +179,7 @@ export default function VisitorsPage() {
       </div>
 
       {/* Main Content Area */}
-      <div className="bg-white rounded-[3rem] border border-gray-100 shadow-sm overflow-hidden flex flex-col min-h-[500px]">
+      <div className="bg-white rounded-[3rem] border border-gray-100 shadow-sm overflow-hidden flex flex-col w-full">
         {/* Toolbar */}
         <div className="p-8 border-b border-gray-50 flex flex-col lg:flex-row justify-between items-center gap-6 bg-white sticky top-0 z-10">
           <div className="flex gap-2 p-1 bg-gray-100/50 rounded-2xl backdrop-blur-sm w-full lg:w-auto overflow-x-auto no-scrollbar">
@@ -175,7 +213,10 @@ export default function VisitorsPage() {
         </div>
 
         {/* Visitor Table/Registry */}
-        <div className="p-4 lg:p-8 overflow-x-auto">
+        <div 
+          className="flex-1 overflow-y-auto p-4 lg:p-8" 
+          style={{ scrollbarWidth: 'thin', scrollbarColor: '#d1fae5 #f9fafb', overflowY: 'auto', maxHeight: '700px' }}
+        >
            <table className="w-full text-left border-separate border-spacing-y-3">
               <thead>
                 <tr className="text-gray-400 font-black text-[10px] uppercase tracking-widest">
@@ -198,10 +239,9 @@ export default function VisitorsPage() {
                   )
                   .map((v) => (
                     <motion.tr 
-                      layout
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.95 }}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ duration: 0.1 }}
                       key={v.id} 
                       className="group hover:bg-emerald-50 transition-colors cursor-pointer"
                     >
